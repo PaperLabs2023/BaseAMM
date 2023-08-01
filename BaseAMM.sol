@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT
-//import "./interfaces/ILPToken.sol";
+
 import "./lptoken.sol";
 import "./interfaces/IWETH.sol";
 import "./interfaces/IAMM.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
-
 pragma solidity ^0.8.9;
 
 contract AnchorFinance is AccessControl{
-//全局变量
+
 
     bytes32 public constant FEE_CONTROL_ROLE = keccak256("FEE_CONTROL_ROLE");
     bytes32 public constant PAIR_CONTROL_ROLE = keccak256("PAIR_CONTROL_ROLE");
@@ -343,6 +342,7 @@ contract AnchorFinance is AccessControl{
     {
         uint amountIn = msg.value;
         WETH.depositETH{value : amountIn}();
+        WETH.transfer(msg.sender, amountIn);
         swapByLimitSli(WETHAddr,_tokenOut,amountIn, _disirSli);
     }
 
