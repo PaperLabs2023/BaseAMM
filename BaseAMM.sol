@@ -341,17 +341,22 @@ contract AnchorFinance is AccessControl{
     function swapWithETH(address _tokenOut,uint _disirSli) public payable reEntrancyMutex
     {
         uint amountIn = msg.value;
-        WETH.depositETH{value : amountIn}();
-        WETH.transfer(msg.sender, amountIn);
-        swapByLimitSli(WETHAddr,_tokenOut,amountIn, _disirSli);
+        //WETH.depositETH{value : amountIn}();
+        WETH.depositETHFor{value : amountIn}(msg.sender);
+        //WETH.transfer(msg.sender, amountIn);
+        swapByLimitSli(msg.sender,_tokenOut,amountIn, _disirSli);
+
     }
 
 
     function swapToETH(address _tokenIn, uint _amountIn, uint _disirSli)public {
+        //IERC20 tokenIn = IERC20(_tokenIn);
+        //tokenIn.transferFrom(msg.sender, address(this), _amountIn);
+
         uint amountOut = swapByLimitSli(_tokenIn,WETHAddr,_amountIn, _disirSli);
-        WETH.withdrawETH(amountOut);
-        address payable user = payable(msg.sender);
-        user.transfer(amountOut);
+        //WETH.withdrawETH(amountOut);
+        //address payable user = payable(msg.sender);
+        //user.transfer(amountOut);
 
     }
 
@@ -404,6 +409,8 @@ contract AnchorFinance is AccessControl{
         _update(lptokenAddr,_tokenIn, _tokenOut, totalReserve0, totalReserve1);
 
     }
+
+
 
 
 
