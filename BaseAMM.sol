@@ -3,6 +3,7 @@
 import "./lptoken.sol";
 import "./interfaces/IWETH.sol";
 import "./interfaces/IAMM.sol";
+import "./StableAlgorithm.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
 pragma solidity ^0.8.9;
@@ -17,18 +18,14 @@ contract AnchorFinance is AccessControl{
 
     mapping(address => address) pairCreator;//lpAddr pairCreator
     address [] _lpTokenAddressList;//lptoken的数组
-    address [] _stableLpTokenAddressList;
     mapping(address => mapping(address => uint)) reserve;//第一个address是lptoken的address ，第2个是相应token的资产，uint是资产的amount
     uint lpFee;//fee to pool
-    uint stableLpFee;
     uint fundFee;
     //检索lptoken
     mapping(address => mapping(address => address)) public findLpToken;
-    mapping (address=> mapping (address => address)) public findStableLpToken;
     IWETH  WETH;
     address  WETHAddr;
     //mapping (address => bool) public isStablePair;
-    mapping (address=>uint) stablelpParameterA;
     mapping (address => address[2]) _lpInfo;
     mapping (address => bool) _lpSwapStatic;
     mapping (address => uint) _lpProfit;
@@ -37,16 +34,17 @@ contract AnchorFinance is AccessControl{
     mapping (address => address[]) _userLpTokenList;
 
 
+
     address fundAddr;
 
 
 
 
-    constructor() {
+    constructor(address _wethAddr) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(FEE_CONTROL_ROLE, msg.sender);
         _grantRole(PAIR_CONTROL_ROLE, msg.sender);
-        _grantRole(PAIR_CONTROL_ROLE,0xf0e2ea9AF6Bf4DC391263A7f0272B4fF8F0cC389);
+        setWeth(_wethAddr);
     }
 
     receive() payable external {}
@@ -67,14 +65,11 @@ contract AnchorFinance is AccessControl{
 
 //管理人员权限
 
-
     function setLpFee(uint fee) external onlyRole(FEE_CONTROL_ROLE){
         lpFee = fee;// dx / 100000
     }
 
-    function setStableLpFee(uint fee) external onlyRole(FEE_CONTROL_ROLE){
-        stableLpFee = fee;// dx / 100000
-    }
+
 
     function setFundFee(uint fee)external onlyRole(FEE_CONTROL_ROLE){
         fundFee = fee;
@@ -84,11 +79,9 @@ contract AnchorFinance is AccessControl{
         fundAddr = _fundAddr;
     }
 
-    function setlpA(address _lpPair, uint _A) public  onlyRole(PAIR_CONTROL_ROLE){
-        stablelpParameterA[_lpPair] = _A;
-    }
 
-    function setWeth(address _wethAddr) external onlyRole(PAIR_CONTROL_ROLE){
+
+    function setWeth(address _wethAddr) public onlyRole(PAIR_CONTROL_ROLE){
         WETH = IWETH(_wethAddr);
         WETHAddr = _wethAddr;
     }
@@ -150,7 +143,7 @@ contract AnchorFinance is AccessControl{
 
         if (findLpToken[_token1][_token0] == address(0)) {
             //当lptoken = 0时，创建lptoken
-            shares = _sqrt(_amount0 * _amount1);
+            shares = StableAlgorithm._sqrt(_amount0 * _amount1);
 
             createPair(_token0,_token1);
 
@@ -165,7 +158,7 @@ contract AnchorFinance is AccessControl{
         } else {
             lptokenAddr = findLpToken[_token1][_token0];
             lptoken = LPToken(lptokenAddr);//获取lptoken地址
-            shares = _min(
+            shares = StableAlgorithm._min(
                 (_amount0 * lptoken.totalSupply()) / reserve[lptokenAddr][_token0],
                 (_amount1 * lptoken.totalSupply()) / reserve[lptokenAddr][_token1]
             );
@@ -187,125 +180,14 @@ contract AnchorFinance is AccessControl{
         _update(lptokenAddr,_token0, _token1, reserve[lptokenAddr][_token0] + _amount0, reserve[lptokenAddr][_token1] + _amount1);
     }
 
-    // to do
-    function addLiquidityWithStablePairByUser(address _token0, address _token1, uint _amount0) public returns (uint shares) {
-        
-        LPToken lptoken;//lptoken接口，为了mint 和 burn lptoken
-        
-        require(_amount0 > 0 ,"require _amount0 > 0 && _amount1 >0");
-        require(_token0 != _token1, "_token0 == _token1");
-        require(findStableLpToken[_token0][_token1] != address(0),"invalid tokenpair");
-        IERC20 token0 = IERC20(_token0);
-        IERC20 token1 = IERC20(_token1);
-        token0.transferFrom(msg.sender, address(this), _amount0);
-        address lptokenAddr;
-        
 
 
 
-        lptokenAddr = findStableLpToken[_token1][_token0];
-        //require(isStablePair[lptokenAddr],"not StablePair");
-        uint amount1 =   reserve[lptokenAddr][_token1] * _amount0 / reserve[lptokenAddr][_token0];
-        token1.transferFrom(msg.sender, address(this), amount1);
-        lptoken = LPToken(lptokenAddr);//获取lptoken地址
-        shares = _min(
-            (_amount0 * lptoken.totalSupply()) / reserve[lptokenAddr][_token0],
-            (amount1 * lptoken.totalSupply()) / reserve[lptokenAddr][_token1]
-        );
-            //获取lptoken地址
-        require(shares > 0, "shares = 0");
-        lptoken.mint(msg.sender,shares);
-        if(!_userLpExist[msg.sender][lptokenAddr])
-        {
-            _userLpTokenList[msg.sender].push(lptokenAddr);
-            _userLpExist[msg.sender][lptokenAddr] = true;
-
-        }
-
-        
-
-        _update(lptokenAddr,_token0, _token1, reserve[lptokenAddr][_token0] + _amount0, reserve[lptokenAddr][_token1] + amount1);
-
-    }
-
-    function addLiquidityWithStablePair(address _token0, address _token1, uint _amount0,uint _amount1) internal returns (uint shares) {
-        
-        
-        
-        require(_amount0 > 0 ,"require _amount0 > 0 && _amount1 >0");
-        require(_token0 != _token1, "_token0 == _token1");
-        require(findStableLpToken[_token0][_token1] == address(0),"alredy add liquidity");
-        IERC20 token0 = IERC20(_token0);
-        IERC20 token1 = IERC20(_token1);
-        token0.transferFrom(msg.sender, address(this), _amount0);
-        token1.transferFrom(msg.sender, address(this), _amount1);
-        address lptokenAddr;
 
 
-        shares = _sqrt(_amount0 * _amount1);
-        lptokenAddr = createStablePair(_token0,_token1);
-        //lptokenAddr = findLpToken[_token1][_token0];
-
-        LPToken lptoken;//lptoken接口，为了mint 和 burn lptoken
-        lptoken = LPToken(lptokenAddr);//获取lptoken地址
-
-        pairCreator[lptokenAddr] = msg.sender;
-        //_amount1 = calOutput(100,reserve[lptokenAddr][_token0] + reserve[lptokenAddr][_token1], reserve[lptokenAddr][_token0],_amount0);
 
 
-        //isStablePair[lptokenAddr] = true;
-            
-        require(shares > 0, "shares = 0");
-        lptoken.mint(msg.sender,shares);
 
-        //setlpA(lptokenAddr, _A);
-        _lpCreatedTime[lptokenAddr] = block.timestamp;
-        if(!_userLpExist[msg.sender][lptokenAddr])
-        {
-            _userLpTokenList[msg.sender].push(lptokenAddr);
-            _userLpExist[msg.sender][lptokenAddr] = true;
-
-        }
-        
-
-        _update(lptokenAddr,_token0, _token1, reserve[lptokenAddr][_token0] + _amount0, reserve[lptokenAddr][_token1] + _amount1);
-
-    }
-
-    function addLiquidityWithStablePairByOwner(address _token0, address _token1, uint _amount0,uint _amount1, uint _A) public onlyRole(PAIR_CONTROL_ROLE)
-    //移除流动性
-    {
-        addLiquidityWithStablePair(_token0, _token1, _amount0, _amount1);
-        setlpA(findStableLpToken[_token0][_token1], _A);
-    }
-    function removeLiquidityWithStableCoin(
-        address _token0,
-        address _token1,
-        uint _shares
-    ) public  returns (uint amount0, uint amount1) {
-        LPToken lptoken;//lptoken接口，为了mint 和 burn lptoken
-        IERC20 token0 = IERC20(_token0);
-        IERC20 token1 = IERC20(_token1);
-        address lptokenAddr = findStableLpToken[_token0][_token1];
-
-        lptoken = LPToken(lptokenAddr);
-
-        if(pairCreator[lptokenAddr] == msg.sender)
-        {
-            require(lptoken.balanceOf(msg.sender) - _shares > 100 ,"paieCreator should left 100 wei lptoken in pool");
-        }
-
-        amount0 = (_shares * reserve[lptokenAddr][_token0]) / lptoken.totalSupply();//share * totalsuply/bal0
-        amount1 = (_shares * reserve[lptokenAddr][_token1]) / lptoken.totalSupply();
-        require(amount0 > 0 && amount1 > 0, "amount0 or amount1 = 0");
-
-        lptoken.burn(msg.sender, _shares);
-        _update(lptokenAddr,_token0, _token1, reserve[lptokenAddr][_token0] - amount0, reserve[lptokenAddr][_token1] - amount1);
-        
-
-        token0.transfer(msg.sender, amount0);
-        token1.transfer(msg.sender, amount1);
-    }
 
     function removeLiquidity(
         address _token0,
@@ -344,21 +226,26 @@ contract AnchorFinance is AccessControl{
         //WETH.depositETH{value : amountIn}();
         WETH.depositETHFor{value : amountIn}(msg.sender);
         //WETH.transfer(msg.sender, amountIn);
-        swapByLimitSli(msg.sender,_tokenOut,amountIn, _disirSli);
+        swapByLimitSli(WETHAddr,_tokenOut,amountIn, _disirSli);
 
     }
+
 
 
     function swapToETH(address _tokenIn, uint _amountIn, uint _disirSli)public {
         //IERC20 tokenIn = IERC20(_tokenIn);
         //tokenIn.transferFrom(msg.sender, address(this), _amountIn);
 
-        uint amountOut = swapByLimitSli(_tokenIn,WETHAddr,_amountIn, _disirSli);
-        //WETH.withdrawETH(amountOut);
-        //address payable user = payable(msg.sender);
-        //user.transfer(amountOut);
+        uint amountOut = swapByLimitSli2(_tokenIn,WETHAddr,_amountIn, _disirSli);
+        WETH.withdrawETH(amountOut);
+        address payable user = payable(msg.sender);
+        user.transfer(amountOut);
 
     }
+
+
+
+
 
 
     function swapByPath(uint _amountIn, uint _disirSli,address [] memory _path) public {
@@ -376,7 +263,7 @@ contract AnchorFinance is AccessControl{
         );
         require(_amountIn > 0, "amount in = 0");
         require(_tokenIn != _tokenOut);
-        require(_amountIn >= 1000, "require amountIn >= 1000 wei token");
+        //require(_amountIn >= 1000, "require amountIn >= 1000 wei token");
 
         IERC20 tokenIn = IERC20(_tokenIn);
         IERC20 tokenOut = IERC20(_tokenOut);
@@ -411,26 +298,18 @@ contract AnchorFinance is AccessControl{
     }
 
 
-
-
-
-
-
-    function swapWithStableCoin(address _tokenIn, address _tokenOut, uint _amountIn)  public returns(uint amountOut){
+    function swapByLimitSli2(address _tokenIn, address _tokenOut, uint _amountIn, uint _disirSli) public returns(uint amountOut){
         require(
-            findStableLpToken[_tokenIn][_tokenOut] != address(0),
+            findLpToken[_tokenIn][_tokenOut] != address(0),
             "invalid token"
         );
-        
         require(_amountIn > 0, "amount in = 0");
         require(_tokenIn != _tokenOut);
-        require(_amountIn >= 1000, "require amountIn >= 1000 wei token");
-        //require(isStablePair[findLpToken[_tokenIn][_tokenOut]],"not stablePair");
+        //require(_amountIn >= 1000, "require amountIn >= 1000 wei token");
 
         IERC20 tokenIn = IERC20(_tokenIn);
-        IERC20 tokenOut = IERC20(_tokenOut);
-        address lptokenAddr = findStableLpToken[_tokenIn][_tokenOut];
-        require(!getLpSwapStatic(lptokenAddr),"swapPair pausing");
+        //IERC20 tokenOut = IERC20(_tokenOut);
+        address lptokenAddr = findLpToken[_tokenIn][_tokenOut];
         uint reserveIn = reserve[lptokenAddr][_tokenIn];
         uint reserveOut = reserve[lptokenAddr][_tokenOut];
 
@@ -438,29 +317,34 @@ contract AnchorFinance is AccessControl{
 
 
         //交易税收 
-        uint amountInWithFee = (_amountIn * (100000-stableLpFee-fundFee)) / 100000;
+        uint amountInWithFee = (_amountIn * (100000-lpFee-fundFee)) / 100000;
         if(getFundFee() > 0){
             tokenIn.transfer(fundAddr,fundFee * _amountIn / 100000);
         }
-        //amountOut = (reserveOut * amountInWithFee) / (reserveIn + amountInWithFee);
-        amountOut = calOutput(getA(lptokenAddr),reserveIn + reserveOut, reserveIn,amountInWithFee);
+        amountOut = (reserveOut * amountInWithFee) / (reserveIn + amountInWithFee);
 
         //检查滑点
-        //setSli(amountInWithFee,reserveIn,reserveOut,_disirSli);
-        //setSliBystable(amountOut,amountInWithFee,reserveIn,reserveOut,_disirSli);
+        setSli(amountInWithFee,reserveIn,reserveOut,_disirSli);
 
 
-        tokenOut.transfer(msg.sender, amountOut);
+        //tokenOut.transfer(msg.sender, amountOut);
         uint totalReserve0 = reserve[lptokenAddr][_tokenIn] + _amountIn; 
         uint totalReserve1 = reserve[lptokenAddr][_tokenOut] - amountOut;
 
-        uint profit = stableLpFee * _amountIn / 100000;
+        uint profit = lpFee * _amountIn / 100000;
 
         _lpProfit[lptokenAddr] += profit;
 
         _update(lptokenAddr,_tokenIn, _tokenOut, totalReserve0, totalReserve1);
 
     }
+
+
+
+
+
+
+
 
     //暴露数据查询方法
 
@@ -474,10 +358,6 @@ contract AnchorFinance is AccessControl{
         
     }
 
-    function getStableLpFee()public view returns(uint) {
-        return stableLpFee;
-        
-    }
 
     function getFundFee()public view returns(uint) {
         return fundFee;
@@ -488,10 +368,7 @@ contract AnchorFinance is AccessControl{
         return findLpToken[_tokenA][_tokenB];
     }
 
-    function getStableLptoken(address _tokenA, address _tokenB) public view returns(address)
-    {
-        return findStableLpToken[_tokenA][_tokenB];
-    }
+
 
 
 
@@ -500,17 +377,13 @@ contract AnchorFinance is AccessControl{
         return _lpTokenAddressList.length;
     }
 
-    function getStableLpTokenLength() public view returns(uint) {
-        return _stableLpTokenAddressList.length;
-    }
+
 
     function getLpTokenList(uint _index)public view returns(address){
         return _lpTokenAddressList[_index];
     }
 
-    function getStableLptokenList(uint _index)public view returns(address) {
-        return _stableLpTokenAddressList[_index];
-    }
+
 
     function getUserLpTokenList(address _userAddr) public view returns(address [] memory){
         return _userLpTokenList[_userAddr];
@@ -542,26 +415,7 @@ contract AnchorFinance is AccessControl{
         return lptokenAddr;
     }
 
-    function createStablePair(address addrToken0, address addrToken1) internal returns(address){
-        bytes32 _salt = keccak256(
-            abi.encodePacked(
-                addrToken0,addrToken1,"stablecoin"
-            )
-        );
-        address lptokenAddr = address(new LPToken{
-            salt : bytes32(_salt)
-        }
-        ());
 
-         //检索lptoken
-        _stableLpTokenAddressList.push(lptokenAddr);
-        findStableLpToken[addrToken0][addrToken1] = lptokenAddr;
-        findStableLpToken[addrToken1][addrToken0] = lptokenAddr;
-
-        _lpInfo[lptokenAddr] = [addrToken0,addrToken1];
-
-        return lptokenAddr;
-    }
 
     function getBytecode() internal pure returns(bytes memory) {
         bytes memory bytecode = type(LPToken).creationCode;
@@ -582,9 +436,6 @@ contract AnchorFinance is AccessControl{
         return address(uint160(uint(hash)));
     }
 
-    function getA(address _lpAddr) public view returns(uint){
-        return stablelpParameterA[_lpAddr];
-    }
 
     function lpInfo(address _lpAddr) public view returns(address [2] memory){
         return _lpInfo[_lpAddr];
@@ -612,31 +463,9 @@ contract AnchorFinance is AccessControl{
 
 //数学库
 
-    function cacalTokenOutAmount(address _tokenIn, address _tokenOut, uint _tokenInAmount) public view returns(uint tokenOutAmount)
-    {
-        address lptokenAddr = getLptoken(_tokenIn,_tokenOut);
-        uint reserveIn = getReserve(lptokenAddr, _tokenIn);
-        uint reserveOut = getReserve(lptokenAddr,_tokenOut);
 
-        tokenOutAmount = (reserveOut * _tokenInAmount) / (reserveIn + _tokenInAmount);
-    }
 
-    function _sqrt(uint y) private pure returns (uint z) {
-        if (y > 3) {
-            z = y;
-            uint x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
-    }
 
-    function _min(uint x, uint y) private pure returns (uint) {
-        return x <= y ? x : y;
-    }
 
     function setSli(uint dx, uint x, uint y, uint _disirSli) private pure returns(uint){
 
@@ -658,71 +487,12 @@ contract AnchorFinance is AccessControl{
 
     }
 
-    function setSliBystable(uint _amountOut,uint dx, uint x, uint y, uint _disirSli) public pure returns(uint){
-
-
-        uint amountOut = _amountOut;
-
-        uint dy = dx * y/x;
-        /*
-        loseAmount = Idea - ammOut
-        Sli = loseAmount/Idea
-        Sli = [dx*y/x - y*dx/(dx + x)]/dx*y/x
-        */
-        uint loseAmount = dy - amountOut;
-
-        uint Sli = loseAmount * 100000 /dy;
-        
-        require(Sli <= _disirSli, "Sli too large");
-        return Sli;
-
-    }
 
 
 
 
-    function calOutAmount(uint A, uint D, uint X)public pure returns(uint)
-    {
-        //return  (4*A*D*D*X+calSqrt(A, D, X) -4*X-4*A*D*X*X) / (8*A*D*X);
-        uint a = 4*A*D*X+D*calSqrt(A, D, X)-4*A*X*X-D*X;
-        //uint amountOut2 = y - amountOut1;
-        return a/(8*A*X);
-
-    }
-
-    function calOutput(uint A, uint D, uint X,uint dx)public pure returns(uint)
-    {
-        //D = D * 10**18;
-        //X = X * 10**18;
-        //dx = dx* 10**18;
-        uint S = X + dx;
-        uint amount1 = calOutAmount(A, D, X);
-        uint amount2 = calOutAmount(A, D, S);
-
-        //uint amountOut2 = y - amountOut1;
-        return amount1 - amount2;
-
-    }
-
-    
 
 
-    function calSqrt(uint A, uint D, uint X)public pure returns(uint)
-    {
-        //uint T = t(A,D,X);
-        //uint calSqrtNum = _sqrt((X*(4+T))*(X*(4+T))+T*T*D*D+4*T*D*D-2*X*T*D*(4+T));
-        //return calSqrtNum;
-        (uint a, uint b) = (4*A*X*X/D+X,4*A*X);
-        uint c;
-        if(a>=b){
-            c = a -b;
-        }else{
-            c = b-a;
-        }
-
-        return _sqrt(c*c+4*D*X*A);
-
-    }
 
 
 
